@@ -49,7 +49,7 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
    ```
 2. Go into the project folder:
    ```bash
-   cd durhack-2025
+   cd durhack-2025-v2
    ```
 3. Install dependencies:
    ```bash
