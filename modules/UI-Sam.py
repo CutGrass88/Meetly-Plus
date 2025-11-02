@@ -1,4 +1,4 @@
-import customtkinter as ctk
+﻿import customtkinter as ctk
 from tkinter import ttk, messagebox
 import tkintermapview as tkm
 import csv
@@ -15,7 +15,7 @@ ctk.set_default_color_theme("blue")
 app = ctk.CTk()
 app.title("Meetly+")
 app.geometry("1200x850")
-app.minsize(900, 600)
+app.minsize(1080, 600)
 
 # ---------- GRID CONFIGURATION ----------
 app.grid_columnconfigure(0, weight=1)   # left
@@ -80,6 +80,52 @@ IATA_DB = None
 IATA_MARKERS = []         # starting location markers
 IATA_MEETING_MARKER = None
 IATA_PATHS = []           # path lines from starts -> meeting
+IATA_LAYOVER_MARKERS = [] # layover markers for connecting itineraries
+CURRENT_RESULT_META = {}  # cached metadata from backend.compute_top10
+
+ROUTE_COLORS = {
+    "direct": "#4caf50",
+    "one_stop": "#ffb300",
+    "two_stop": "#ab47bc",
+    "fallback": "#ef5350",
+    "same": "#64b5f6",
+}
+DEFAULT_ROUTE_COLOR = "#9e9e9e"
+
+submit_button = None
+ai_summary_box = None
+progress_bar = None
+
+
+def _set_ai_summary_text(text):
+    if ai_summary_box is None:
+        return
+    ai_summary_box.configure(state="normal")
+    ai_summary_box.delete("1.0", "end")
+    ai_summary_box.insert("1.0", text)
+    ai_summary_box.configure(state="disabled")
+
+
+def _empty_meta():
+    return {"by_candidate": {}, "requested_origins": [], "ordered_candidates": []}
+
+
+def _route_color(availability):
+    return ROUTE_COLORS.get(availability, DEFAULT_ROUTE_COLOR)
+
+
+def _route_coords(detail, db):
+    if not detail:
+        return None
+    coords = []
+    for node in detail.get("path", []):
+        node_info = db.get(node)
+        if not node_info:
+            return None
+        coords.append((node_info[0], node_info[1]))
+    if len(coords) < 2:
+        return None
+    return coords
 
 def load_iata_db():
     global IATA_DB
@@ -151,16 +197,80 @@ def on_submit_no_hub():
         messagebox.showerror("Error", "Please enter between 2 and 25 IATA codes.")
         return
 
-    # 1) Compute top 10 in backend and update table
-    try:
-        rows = backend.compute_top10(codes)
-    except Exception as e:
-        rows = []
+    if submit_button is not None:
+        submit_button.configure(state="disabled")
+
+    if progress_bar is not None:
+        try:
+            progress_bar.stop()
+        except Exception:
+            pass
+        try:
+            progress_bar.pack(padx=10, pady=(0, 10), fill="x")
+        except Exception:
+            pass
+        try:
+            progress_bar.start()
+        except Exception:
+            pass
+
+    progress_lines = [
+        f"Received attendees: {', '.join(codes)}",
+        "Computing meeting recommendations...",
+    ]
+    _set_ai_summary_text("\n".join(progress_lines))
+
+    def _background():
+        error = None
+        try:
+            rows, meta = backend.compute_top10(codes)
+            if not isinstance(meta, dict):
+                meta = _empty_meta()
+        except Exception as exc:
+            rows, meta = [], _empty_meta()
+            error = exc
+        app.after(0, lambda: _apply_submission_results(codes, rows, meta, error))
+
+    threading.Thread(target=_background, daemon=True).start()
+
+
+def _apply_submission_results(codes, rows, meta, error=None):
+    if submit_button is not None:
+        submit_button.configure(state="normal")
+
+    if progress_bar is not None:
+        try:
+            progress_bar.stop()
+        except Exception:
+            pass
+        try:
+            progress_bar.pack_forget()
+        except Exception:
+            pass
+
+    if not isinstance(meta, dict):
+        meta = _empty_meta()
+
+    global CURRENT_RESULT_META
+    CURRENT_RESULT_META = meta
+
+    if error:
+        print(f"[submit] compute_top10 failed: {error}")
+        try:
+            messagebox.showerror(
+                "Error",
+                "Failed to compute meeting recommendations. Showing any partial results if available.",
+            )
+        except Exception:
+            pass
+
+    sanitized_rows = rows or []
+
     # Always clear table then insert latest results (if any)
     for item in table.get_children():
         table.delete(item)
-    for r in (rows or []):
-        # r is [iata, airport_name, score, mean_time, total_co2, total_distance]
+    for r in sanitized_rows:
+        # r is [iata, airport_name, score, mean_time, total_co2, total_distance, connectivity_summary]
         try:
             values = (
                 str(r[0]),
@@ -169,6 +279,7 @@ def on_submit_no_hub():
                 f"{float(r[3]):.2f}",
                 f"{float(r[4]):.2f}",
                 f"{float(r[5]):.2f}",
+                str(r[6]),
             )
         except Exception:
             values = tuple(str(x) for x in r)
@@ -195,6 +306,16 @@ def on_submit_no_hub():
         except Exception:
             pass
         IATA_MEETING_MARKER = None
+    for marker in list(IATA_LAYOVER_MARKERS):
+        try:
+            marker.delete()
+        except Exception:
+            pass
+        finally:
+            try:
+                IATA_LAYOVER_MARKERS.remove(marker)
+            except Exception:
+                pass
     for p in list(IATA_PATHS):
         try:
             p.delete()
@@ -222,33 +343,100 @@ def on_submit_no_hub():
     # 3) Determine meeting location from top of the (now updated) table
     meeting_coord = None
     meeting_code = None
+    candidate_detail = {}
+    top_routes = {}
     try:
         table_items = table.get_children()
         if table_items:
-            first_values = table.item(table_items[0], 'values')
+            first_values = table.item(table_items[0], "values")
             if first_values:
-                token = str(first_values[0]).strip()
+                token = str(first_values[0]).strip().upper()
                 resolved = _resolve_code_or_name(token, db)
                 if resolved:
                     meeting_code, mlat, mlon, mname = resolved
                     IATA_MEETING_MARKER = map_widget.set_marker(mlat, mlon, text=f"MEETING: {meeting_code}")
                     meeting_coord = (mlat, mlon)
+                    candidate_detail = (CURRENT_RESULT_META.get("by_candidate") or {}).get(meeting_code, {}) or {}
+                    top_routes = candidate_detail.get("routes", {}) or {}
     except Exception:
         meeting_coord = None
+        candidate_detail = {}
+        top_routes = {}
 
-    # 4) Draw lines from starting points to meeting location
-    if meeting_coord and plotted:
-        for (lat, lon) in plotted:
+    def _draw_path(coords_sequence, availability):
+        if not coords_sequence or len(coords_sequence) < 2:
+            return
+        color = _route_color(availability)
+        width = 3 if availability != "fallback" else 2
+        try:
+            path_obj = map_widget.set_path(coords_sequence, width=width, color=color)
+            IATA_PATHS.append(path_obj)
+        except Exception:
+            pass
+
+    plotted_stop_keys = set()
+
+    def _plot_stop_markers(detail):
+        if not detail:
+            return
+        path_nodes = detail.get("path") or []
+        if len(path_nodes) <= 2:
+            return
+        color = _route_color(detail.get("availability"))
+        for stop_code in path_nodes[1:-1]:
+            key = (stop_code, color)
+            if key in plotted_stop_keys:
+                continue
+            info = db.get(stop_code)
+            if not info:
+                continue
+            lat, lon, name = info
             try:
-                path = map_widget.set_path([(lat, lon), meeting_coord])
-                IATA_PATHS.append(path)
+                marker = map_widget.set_marker(
+                    lat,
+                    lon,
+                    text=f"Stop: {stop_code}",
+                    marker_color_outside=color,
+                    marker_color_circle=color,
+                )
+            except TypeError:
+                marker = map_widget.set_marker(lat, lon, text=f"Stop: {stop_code}")
             except Exception:
-                pass
+                continue
+            IATA_LAYOVER_MARKERS.append(marker)
+            plotted_stop_keys.add(key)
 
-    # 5) Center/zoom map to include all points (starts + meeting if any)
+    if plotted:
+        for code in codes:
+            detail = top_routes.get(code)
+            if detail and detail.get("availability") == "same":
+                continue
+            coords_sequence = _route_coords(detail, db) if detail else None
+            if coords_sequence:
+                _draw_path(coords_sequence, detail.get("availability"))
+                _plot_stop_markers(detail)
+            elif meeting_coord:
+                origin_info = db.get(code)
+                if origin_info:
+                    _draw_path([(origin_info[0], origin_info[1]), meeting_coord], "fallback")
+
+    # 5) Center/zoom map to include all points (starts + meeting + connections if any)
     all_pts = list(plotted)
+    seen_pts = {(lat, lon) for (lat, lon) in all_pts}
     if meeting_coord:
-        all_pts.append(meeting_coord)
+        key = (meeting_coord[0], meeting_coord[1])
+        if key not in seen_pts:
+            all_pts.append(meeting_coord)
+            seen_pts.add(key)
+    for detail in top_routes.values():
+        coords_sequence = _route_coords(detail, db)
+        if coords_sequence:
+            for lat, lon in coords_sequence:
+                key = (lat, lon)
+                if key not in seen_pts:
+                    all_pts.append((lat, lon))
+                    seen_pts.add(key)
+
     if all_pts:
         avg_lat = sum(p[0] for p in all_pts) / len(all_pts)
         avg_lon = sum(p[1] for p in all_pts) / len(all_pts)
@@ -269,23 +457,16 @@ def on_submit_no_hub():
         else:
             map_widget.set_zoom(3)
 
-    # 6) Update the AI summary box (optional AI reason)
-    def _set_summary(text):
-        ai_summary_box.configure(state="normal")
-        ai_summary_box.delete("1.0", "end")
-        ai_summary_box.insert("1.0", text)
-        ai_summary_box.configure(state="disabled")
-
     # Pull the top row directly from the rendered table so the summary reflects the visible data
     table_items = table.get_children()
     top_row = table.item(table_items[0], "values") if table_items else None
 
-    if not top_row or len(top_row) < 6:
-        _set_summary(f"Received attendees: {', '.join(codes)}\nNo results computed.")
+    if not top_row or len(top_row) < 7:
+        _set_ai_summary_text(f"Received attendees: {', '.join(codes)}\nNo results computed.")
         return
 
     safe = list(top_row)
-    while len(safe) < 6:
+    while len(safe) < 7:
         safe.append("")
     try:
         score_s = f"{float(safe[2]):.4f}"
@@ -295,16 +476,39 @@ def on_submit_no_hub():
     except Exception:
         score_s, time_s, co2_s, dist_s = str(safe[2]), str(safe[3]), str(safe[4]), str(safe[5])
 
-    fallback = (
-        f"AI summary unavailable.\n"
-        f"Top candidate: {safe[0]} – {safe[1]} (score {score_s}, time {time_s} min, CO2 {co2_s} kg, distance {dist_s} km)"
-    )
+    conn_s = str(safe[6])
 
-    _set_summary(f"Received attendees: {', '.join(codes)}\nGenerating AI summary...")
+    stats = candidate_detail.get("stats") if candidate_detail else {}
+    stats_summary_line = ""
+    if isinstance(stats, dict) and stats:
+        stats_summary_line = (
+            f"Routes: direct {stats.get('direct', 0)}, "
+            f"1-stop {stats.get('one_stop', 0)}, "
+            f"2-stop {stats.get('two_stop', 0)}, "
+            f"fallback {stats.get('fallback', 0)}, "
+            f"local {stats.get('same', 0)}"
+        )
+
+    intro_lines = [f"Received attendees: {', '.join(codes)}", "Generating AI summary..."]
+    if stats_summary_line:
+        intro_lines.append(stats_summary_line)
+    _set_ai_summary_text("\n".join(intro_lines))
+
+    fallback_lines = [
+        "AI summary unavailable.",
+        f"Top candidate: {safe[0]} - {safe[1]} (score {score_s}, time {time_s} min, CO2 {co2_s} kg, distance {dist_s} km).",
+        f"Connectivity: {conn_s}",
+    ]
+    if stats_summary_line:
+        fallback_lines.append(stats_summary_line)
+    fallback = "\n".join(fallback_lines)
+
+    stats_payload = dict(stats) if isinstance(stats, dict) and stats else None
 
     def _worker():
         try:
             from modules.AI import reason
+
             co2_val = float(top_row[4])
             time_val = float(top_row[3])
             dist_val = float(top_row[5])
@@ -315,16 +519,23 @@ def on_submit_no_hub():
                 numPeople=len(codes),
                 locations=codes,
                 hub=top_row[0],
+                connectivity=conn_s,
+                stats=stats_payload,
             )
             final_text = str(text).strip() if text else ""
-            app.after(0, lambda: _set_summary(final_text if final_text else fallback))
+            app.after(0, lambda: _set_ai_summary_text(final_text if final_text else fallback))
         except Exception:
-            app.after(0, lambda: _set_summary(fallback))
+            app.after(0, lambda: _set_ai_summary_text(fallback))
 
     threading.Thread(target=_worker, daemon=True).start()
 
 submit_button = ctk.CTkButton(left_frame, text="Submit", command=on_submit_no_hub, width=160, height=36)
 submit_button.pack(pady=(5, 15))
+
+progress_bar = ctk.CTkProgressBar(left_frame, mode="indeterminate")
+progress_bar.pack(padx=10, pady=(0, 10), fill="x")
+progress_bar.stop()
+progress_bar.pack_forget()
 
 # Textbox for AI summary under Submit
 ai_summary_box = ctk.CTkTextbox(left_frame, width=220, height=140)
@@ -353,9 +564,9 @@ style.configure("Treeview.Heading",
                 foreground="white")
 style.map("Treeview", background=[("selected", "#1f538d")])
 
-columns = ("IATA", "Airport", "Score", "Mean Time (min)", "Total CO2 (kg)", "Total Distance (km)")
-column_widths = (80, 220, 90, 150, 150, 170)
-column_anchors = ("center", "w", "center", "center", "center", "center")
+columns = ("IATA", "Airport", "Score", "Mean Time (min)", "Total CO2 (kg)", "Total Distance (km)", "Connectivity")
+column_widths = (80, 220, 90, 150, 150, 170, 220)
+column_anchors = ("center", "w", "center", "center", "center", "center", "w")
 table = ttk.Treeview(table_frame, columns=columns, show="headings")
 for col, width, anchor in zip(columns, column_widths, column_anchors):
     table.heading(col, text=col)
@@ -390,4 +601,3 @@ map_widget.set_position(30.0, 10.0)
 
 # ---------- MAIN LOOP ----------
 app.mainloop()
-
