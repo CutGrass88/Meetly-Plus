@@ -23,8 +23,8 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
 - Fairness-based ranking of potential meeting hubs  
 - AI-generated explanations using Google’s Gemini 2.0 Flash  
 - Clean, dark-themed interface built with CustomTkinter  
-- Dynamic data table showing travel metrics (time, distance, CO₂)
-- Average runtime: ~1 min 10 sec for full analysis
+- Dynamic data table showing travel metrics (time, distance, CO₂)  
+- Average runtime: ~1 min 10 sec for full analysis  
 
 ---
 
@@ -36,8 +36,8 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
   - `tkintermapview` — interactive map visualisation  
   - `google-genai` — Gemini API for AI explanations  
   - `ttk` — data table styling  
-- **Tools:** GitHub, VS Code, Google Gemini API
-- **Data:** Openflights.com routs and airports data
+- **Tools:** GitHub, VS Code, Google Gemini API  
+- **Data:** OpenFlights.com routes and airports data  
 
 ---
 
@@ -55,7 +55,17 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
    ```bash
    pip install -r requirements.txt
    ```
-4. Run the app:
+4. Obtain a **Google Gemini API key** from  
+   [https://makersuite.google.com/app/apikey](https://makersuite.google.com/app/apikey)
+5. Open the file:
+   ```
+   modules/AI.py
+   ```
+   and replace the placeholder API key line with your own key:
+   ```python
+   client = genai.Client(api_key="YOUR_API_KEY_HERE")
+   ```
+6. Run the app:
    ```bash
    python main.py
    ```
@@ -64,6 +74,6 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
 
 ## Team
 
-- **Sam Makin**
-- **Justin Basson** 
+- **Sam Makin**  
+- **Justin Basson**  
 - **Denis Ivanciuc**
