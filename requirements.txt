@@ -1,2 +1,4 @@
 google-genai
 customtkinter
+tkintermapview
+Pillow
