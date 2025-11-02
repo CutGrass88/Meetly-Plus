@@ -37,6 +37,7 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
   - `google-genai` — Gemini API for AI explanations  
   - `ttk` — data table styling  
 - **Tools:** GitHub, VS Code, Google Gemini API
+- **Data:** Openflights.com routs and airports data
 
 ---
 
@@ -63,6 +64,6 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
 
 ## Team
 
-- **Sam Makin** — UI design, AI integration, and overall project coordination  
-- **Justin Basson** — Backend logic and data processing  
-- **Denis Ivancicuc** — Mapping system and visualisation
+- **Sam Makin**
+- **Justin Basson** 
+- **Denis Ivanciuc**
