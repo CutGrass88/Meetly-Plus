@@ -74,6 +74,6 @@ On average, the system takes **around 1 minute and 10 seconds** to calculate and
 
 ## Team
 
-- **Sam Makin**  
+- **Denis Ivanciuc (Me)**  
 - **Justin Basson**  
-- **Denis Ivanciuc**
+- **Sam Makin**
