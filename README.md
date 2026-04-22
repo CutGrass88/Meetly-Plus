@@ -7,7 +7,7 @@ It was built in under 24 hours using **Python** and aims to make global meetups 
 
 ## Overview
 
-**Meetly+** helps distributed teams find the fairest meeting location by balancing travel time, total distance, and estimated CO₂ emissions.  
+**Meetly+** helps distributed teams find the fairest meeting location by balancing travel time, total distance and estimated CO₂ emissions.  
 Users can input 2–25 IATA airport codes, and the app visualises all routes on a real-world map while ranking potential meeting hubs based on fairness and sustainability.
 
 An integrated **AI component (Gemini API)** generates natural-language summaries explaining why a particular hub was chosen — making the results easy to interpret.
